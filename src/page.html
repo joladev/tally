@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tally</title>
+<style>
+  :root {
+    --bg: #fbfaf7;
+    --card: #ffffff;
+    --ink: #1d1b18;
+    --muted: #7a746b;
+    --line: #ebe6dd;
+    --bar: #e07a3f;
+    --bar-soft: #f6dccb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #151413;
+      --card: #1e1c1a;
+      --ink: #efeae2;
+      --muted: #9b948a;
+      --line: #2e2b27;
+      --bar: #f0905a;
+      --bar-soft: #4a2f20;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 system-ui, sans-serif; }
+  main { max-width: 1040px; margin: 0 auto; padding: 2rem 1rem 4rem; }
+  header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 1rem; }
+  h1 { margin: 0; font-size: 1.6rem; }
+  h1 a { color: var(--muted); text-decoration: none; }
+  nav { display: flex; gap: 0.25rem; }
+  nav button { font: inherit; padding: 0.3rem 0.7rem; border: 1px solid var(--line); border-radius: 8px; background: var(--card); color: var(--ink); cursor: pointer; }
+  nav button[aria-pressed="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+  .total { margin: 1.5rem 0 0.5rem; color: var(--muted); }
+  .total strong { color: var(--ink); font-size: 2rem; margin-right: 0.4rem; }
+  .chart { display: flex; align-items: flex-end; gap: 1px; height: 140px; padding: 0.5rem; background: var(--card); border: 1px solid var(--line); border-radius: 12px; }
+  .chart div { flex: 1; min-height: 1px; background: var(--bar); border-radius: 2px 2px 0 0; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 1rem; margin-top: 1rem; }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 0.9rem 1rem; }
+  h2 { margin: 0 0 0.6rem; font-size: 0.95rem; }
+  ol { margin: 0; padding: 0; list-style: none; }
+  li { position: relative; display: flex; justify-content: space-between; gap: 1rem; padding: 0.15rem 0.4rem; border-radius: 6px; }
+  li .fill { position: absolute; inset: 0 auto 0 0; background: var(--bar-soft); border-radius: 6px; z-index: 0; }
+  li span { position: relative; z-index: 1; }
+  li .value { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  li .count { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .empty { color: var(--muted); }
+  form { display: grid; gap: 0.7rem; max-width: 520px; margin-top: 2rem; }
+  form label { display: grid; gap: 0.25rem; color: var(--muted); font-size: 0.9rem; }
+  form label.check { display: flex; align-items: center; gap: 0.5rem; }
+  form input[type="text"], form textarea { font: inherit; padding: 0.45rem 0.6rem; border: 1px solid var(--line); border-radius: 8px; background: var(--card); color: var(--ink); }
+  form button { justify-self: start; font: inherit; padding: 0.4rem 0.9rem; border: 0; border-radius: 8px; background: var(--ink); color: var(--bg); cursor: pointer; }
+  #saved { color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1><a href="/">tally</a> / <span id="zone"></span></h1>
+    <nav id="ranges"></nav>
+  </header>
+  <p class="total"><strong id="requests">…</strong>requests</p>
+  <div class="chart" id="chart"></div>
+  <div class="grid" id="lists"></div>
+
+  <form id="settings">
+    <h2>Settings</h2>
+    <label>Name<input type="text" name="name" required></label>
+    <label class="check"><input type="checkbox" name="public">Public: anyone can fetch this zone's counts</label>
+    <label>Only count these paths, one per line. Empty counts every path.<textarea name="paths" rows="3"></textarea></label>
+    <label>Count the values of these query parameters, one per line.<textarea name="params" rows="2"></textarea></label>
+    <label>Token, as set in Bunny's log forwarding. Lines without it are dropped.<input type="text" name="token" autocomplete="off" required></label>
+    <button>Save</button>
+    <span id="saved"></span>
+  </form>
+</main>
+<script>
+const RANGES = [["day", "24 hours"], ["week", "7 days"], ["month", "30 days"], ["year", "1 year"], ["all", "All time"]];
+const zone = decodeURIComponent(location.pathname.split("/")[1]);
+let range = new URLSearchParams(location.search).get("range") || "week";
+
+document.getElementById("zone").textContent = zone;
+for (const [name, label] of RANGES) {
+  const button = document.createElement("button");
+  button.textContent = label;
+  button.dataset.range = name;
+  button.addEventListener("click", () => { range = name; history.replaceState(null, "", `?range=${name}`); load(); });
+  document.getElementById("ranges").append(button);
+}
+load();
+loadSettings();
+
+async function loadSettings() {
+  const response = await fetch(`/${encodeURIComponent(zone)}/settings`);
+  const settings = await response.json();
+  const form = document.getElementById("settings");
+  form.elements.name.value = settings.name;
+  form.elements.public.checked = settings.public;
+  form.elements.paths.value = settings.paths.join("\n");
+  form.elements.params.value = settings.params.join("\n");
+  form.elements.token.value = settings.token;
+}
+
+document.getElementById("settings").addEventListener("submit", async event => {
+  event.preventDefault();
+  const form = event.target;
+  const lines = text => text.split("\n").map(line => line.trim()).filter(Boolean);
+  const settings = {
+    name: form.elements.name.value.trim(),
+    public: form.elements.public.checked,
+    paths: lines(form.elements.paths.value),
+    params: lines(form.elements.params.value),
+    token: form.elements.token.value.trim(),
+  };
+  const response = await fetch(`/${encodeURIComponent(zone)}/settings`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(settings),
+  });
+  if (!response.ok) {
+    document.getElementById("saved").textContent = await response.text();
+  } else if (settings.name !== zone) {
+    location.href = `/${encodeURIComponent(settings.name)}${location.search}`;
+  } else {
+    document.getElementById("saved").textContent = "Saved.";
+  }
+});
+
+async function load() {
+  for (const button of document.querySelectorAll("nav button")) {
+    button.setAttribute("aria-pressed", button.dataset.range === range);
+  }
+  const response = await fetch(`/${encodeURIComponent(zone)}/stats.json?range=${range}`);
+  const stats = await response.json();
+  document.getElementById("requests").textContent = stats.requests.toLocaleString();
+  drawChart(stats.series);
+
+  const lists = [
+    ["Clients", stats.clients],
+    ["Referrers", stats.referrers],
+    ["Paths", stats.paths],
+    ["Countries", sorted(stats.countries)],
+    ["Cache", sorted(stats.cache)],
+    ["Status codes", sorted(stats.statuses)],
+    ...Object.entries(stats.params).map(([name, values]) => [`Top ${name}`, values]),
+  ];
+  document.getElementById("lists").replaceChildren(...lists.map(([title, rows]) => list(title, rows)));
+}
+
+function drawChart(series) {
+  const largest = Math.max(1, ...series.map(([, count]) => count));
+  const bars = series.map(([start, count]) => {
+    const bar = document.createElement("div");
+    bar.style.height = `${(count / largest) * 100}%`;
+    bar.title = `${new Date(start * 1000).toLocaleString()}: ${count.toLocaleString()}`;
+    return bar;
+  });
+  document.getElementById("chart").replaceChildren(...bars);
+}
+
+function sorted(counts) {
+  return Object.entries(counts).sort((a, b) => b[1] - a[1]);
+}
+
+function list(title, rows) {
+  const section = document.createElement("section");
+  const heading = document.createElement("h2");
+  heading.textContent = title;
+  const items = document.createElement("ol");
+  const largest = Math.max(1, ...rows.map(([, count]) => count));
+  for (const [value, count] of rows) {
+    const item = document.createElement("li");
+    const fill = document.createElement("span");
+    fill.className = "fill";
+    fill.style.width = `${(count / largest) * 100}%`;
+    item.append(fill, span("value", value), span("count", count.toLocaleString()));
+    items.append(item);
+  }
+  if (!rows.length) items.append(span("empty", "Nothing yet."));
+  section.append(heading, items);
+  return section;
+}
+
+function span(className, text) {
+  const element = document.createElement("span");
+  element.className = className;
+  element.textContent = text;
+  return element;
+}
+</script>
+</body>
+</html>

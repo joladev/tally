@@ -1,0 +1,19 @@
+when:
+  - event: ["push", "pull_request"]
+    branch: ["main"]
+
+engine: microvm
+image: nixos
+
+environment:
+  CARGO_INCREMENTAL: "0"
+
+dependencies:
+  - rustup
+  - gcc
+  - just
+  - cargo-nextest
+
+steps:
+  - name: test
+    command: just test
