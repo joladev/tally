@@ -65,6 +65,9 @@ fn client(user_agent: Option<&str>) -> &str {
     let Some(user_agent) = user_agent else {
         return "unknown";
     };
+    if let Some(url) = contact_url(user_agent) {
+        return url;
+    }
     if user_agent.starts_with("Mozilla/") {
         return BROWSERS
             .iter()
@@ -72,6 +75,11 @@ fn client(user_agent: Option<&str>) -> &str {
             .map_or("other browser", |(_, name)| name);
     }
     user_agent.split(['/', ' ']).next().unwrap_or(user_agent)
+}
+
+fn contact_url(user_agent: &str) -> Option<&str> {
+    let rest = &user_agent[user_agent.find("+http")? + 1..];
+    Some(rest.split([')', ';', ' ']).next().unwrap_or(rest))
 }
 
 fn host(url: &str) -> &str {
@@ -134,5 +142,14 @@ mod tests {
         assert_eq!(values(&counts.referrers), ["none", "tangled.org"]);
         assert_eq!(counts.params["q"].ranked()[0].1.count, 2);
         assert_eq!(counts.statuses["2xx"], 2);
+    }
+
+    #[test]
+    fn names_bots_by_their_contact_url() {
+        let larm = "Larm/1.2.3 (+https://larm.dev)";
+        let googlebot = "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)";
+        assert_eq!(client(Some(larm)), "https://larm.dev");
+        assert_eq!(client(Some(googlebot)), "http://www.google.com/bot.html");
+        assert_eq!(client(Some("curl/8.7.1")), "curl");
     }
 }
