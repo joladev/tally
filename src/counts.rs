@@ -65,8 +65,8 @@ fn client(user_agent: Option<&str>) -> &str {
     let Some(user_agent) = user_agent else {
         return "unknown";
     };
-    if let Some(url) = contact_url(user_agent) {
-        return url;
+    if let Some(host) = contact_host(user_agent) {
+        return host;
     }
     if user_agent.starts_with("Mozilla/") {
         return BROWSERS
@@ -77,9 +77,12 @@ fn client(user_agent: Option<&str>) -> &str {
     user_agent.split(['/', ' ']).next().unwrap_or(user_agent)
 }
 
-fn contact_url(user_agent: &str) -> Option<&str> {
-    let rest = &user_agent[user_agent.find("+http")? + 1..];
-    Some(rest.split([')', ';', ' ']).next().unwrap_or(rest))
+fn contact_host(user_agent: &str) -> Option<&str> {
+    let rest = user_agent[user_agent.find("+http")?..].split_once("://")?.1;
+    let end = rest
+        .find([')', ';', ' ', '/', '?', '#'])
+        .unwrap_or(rest.len());
+    Some(&rest[..end])
 }
 
 fn host(url: &str) -> &str {
@@ -145,11 +148,11 @@ mod tests {
     }
 
     #[test]
-    fn names_bots_by_their_contact_url() {
+    fn names_bots_by_their_contact_host() {
         let larm = "Larm/1.2.3 (+https://larm.dev)";
         let googlebot = "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)";
-        assert_eq!(client(Some(larm)), "https://larm.dev");
-        assert_eq!(client(Some(googlebot)), "http://www.google.com/bot.html");
+        assert_eq!(client(Some(larm)), "larm.dev");
+        assert_eq!(client(Some(googlebot)), "www.google.com");
         assert_eq!(client(Some("curl/8.7.1")), "curl");
     }
 }
